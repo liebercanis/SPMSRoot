@@ -2,6 +2,9 @@
 //  M.Gold June 2022
 // class to make hits from vector data
 //////////////////////////////////////////////////////////
+/* algorithm from
+P. Ugec et al. Pulse processing routines for neutron time-of-flight data. Nucl. Instrum. Meth., A812:134–144, 2016.
+*/
 #include <sstream>
 #include <unistd.h>
 #include <iostream>
@@ -34,15 +37,17 @@
 #include "hitFinder.hxx"
 #include "TBEvent.hxx"
 
-hitFinder::hitFinder(TFile *theFile, TSpms *tspms, TTree* btree, TBEvent *beventInstance, TString theTag)
+hitFinder::hitFinder(TFile *theFile, TSpms *tspms, TTree *btree, TBEvent *beventInstance, TString theTag)
 {
   fout = theFile;
   fftDir = fout->mkdir("fftDir");
+  evDir = fout->mkdir("evDir");
   tag = theTag;
   fspms = tspms;
   ftree = btree;
-  bevent = beventInstance; 
+  bevent = beventInstance;
   nsamples = TSpms::NVALUES;
+  rmsCut = 3.0;
   // initialize fft
   fFFT = TVirtualFFT::FFT(1, &nsamples, "R2C M K");
   fInverseFFT = TVirtualFFT::FFT(1, &nsamples, "C2R M K");
@@ -54,7 +59,6 @@ hitFinder::hitFinder(TFile *theFile, TSpms *tspms, TTree* btree, TBEvent *bevent
   hPeakCount = new TH1D("PeakCount", " peaks by det ", NDET, 0, NDET);
   hHitLength = new TH1I("HitLength", " hit length", 100, 0, 100);
   hPeakNWidth = new TH1I("PeakNWidth", "PeakNWidth", 100, 0, 100);
-
 
   fftDir->cd();
 
@@ -71,10 +75,10 @@ hitFinder::hitFinder(TFile *theFile, TSpms *tspms, TTree* btree, TBEvent *bevent
     hEvDerWave[id] = new TH1D(Form("EvDerWave%s", dname.Data()), Form("DerWave%s", dname.Data()), nsamples, 0, nsamples);
     hEvFiltWave[id] = new TH1D(Form("EvFiltWave%s", dname.Data()), Form("FiltWave%s", dname.Data()), nsamples, 0, nsamples);
     hEvHitWave[id] = new TH1D(Form("EvHitWave%s", dname.Data()), Form("HitWave%s", dname.Data()), nsamples, 0, nsamples);
-    //hFFT[id]->SetDirectory(nullptr);
-    //hInvFFT[id]->SetDirectory(nullptr);
-    //hFFTFilt[id]->SetDirectory(nullptr);
-    //hEvWave[id]->SetDirectory(nullptr);
+    // hFFT[id]->SetDirectory(nullptr);
+    // hInvFFT[id]->SetDirectory(nullptr);
+    // hFFTFilt[id]->SetDirectory(nullptr);
+    // hEvWave[id]->SetDirectory(nullptr);
     hEvDerWave[id]->SetDirectory(nullptr);
     hEvHitWave[id]->SetDirectory(nullptr);
     hEvFiltWave[id]->SetDirectory(nullptr);
@@ -88,12 +92,12 @@ hitFinder::hitFinder(TFile *theFile, TSpms *tspms, TTree* btree, TBEvent *bevent
   {
     printf(" !!!! no transforms !!!! \n");
   }
-  cout << " created hitFinder with " << ftree->GetName() << " nsamples =  " << nsamples << " gotTransforms= " << gotTransforms << endl;
+  cout << " created hitFinder with " << ftree->GetName() << " rmsCut  =  " << rmsCut << " gotTransforms= " << gotTransforms << endl;
 }
 
 void hitFinder::fevent(Long64_t ievent, vector<double> eventDigi)
 {
-  //printf(" finder idet %i  event %lld  %ld nsam %lu \n ", fspms->channel, ievent, detNames.size(), eventDigi.size());
+  // printf(" finder idet %i  event %lld  %ld nsam %lu \n ", fspms->channel, ievent, detNames.size(), eventDigi.size());
   bevent->clear();
   rdigi = eventDigi;
   nsamples = rdigi.size();
@@ -105,7 +109,7 @@ void hitFinder::fevent(Long64_t ievent, vector<double> eventDigi)
   bevent->event = fspms->ievt;
   bevent->time = fspms->timestamp;
   bevent->energy = fspms->energy;
-  bevent->channel= fspms->channel;
+  bevent->channel = fspms->channel;
 
   // get averages
   std::vector<double> vsort;
@@ -114,10 +118,10 @@ void hitFinder::fevent(Long64_t ievent, vector<double> eventDigi)
   std::sort(vsort.begin(), vsort.end());
   double ave = vsort[unsigned(0.5 * double(vsort.size()))];
   double sigma = TMath::Abs(vsort[0.659 * vsort.size()] - ave);
-  
+
   bevent->ave = ave;
   bevent->sigma = sigma;
-  //printf(" finder idet %i  event %lld  ave %f  sigma %f nsamples %i (%lu) \n ", idet, ievent, ave, sigma, nsamples, rdigi.size());
+  // printf(" finder idet %i  event %lld  ave %f  sigma %f nsamples %i (%lu) \n ", idet, ievent, ave, sigma, nsamples, rdigi.size());
 
   digi.clear();
   for (int i = 0; i < nsamples; ++i)
@@ -156,18 +160,17 @@ void hitFinder::fevent(Long64_t ievent, vector<double> eventDigi)
   if (gotTransforms)
     digi = fdigi;
 
-  unsigned diffStep = 7;
+  unsigned diffStep = 2;
   differentiate(diffStep);
 
-  for (unsigned isample = 0; isample < digi.size(); isample++)  hEvDerWave[idet]->SetBinContent(isample + 1, ddigi[isample]);
-
-
+  for (unsigned isample = 0; isample < digi.size(); isample++)
+    hEvDerWave[idet]->SetBinContent(isample + 1, ddigi[isample]);
 
   findHits(idet, ievent);
 
   detHits = makeHits(idet, triggerTime, firstCharge);
   // fill hits
-  //cout << ievent << " det " << idet << " << detHits size " << detHits.size() << endl;
+  // cout << ievent << " det " << idet << " << detHits size " << detHits.size() << endl;
   hdigi.clear();
   hdigi.resize(digi.size());
   for (hitMapIter hitIter = detHits.begin(); hitIter != detHits.end(); ++hitIter)
@@ -175,7 +178,7 @@ void hitFinder::fevent(Long64_t ievent, vector<double> eventDigi)
     TDetHit hiti = hitIter->second;
     bevent->hitSum += hiti.qsum;
     if (hiti.startTime > 720 && hiti.startTime > 770)
-        bevent->hitPrompt += hiti.qsum;
+      bevent->hitPrompt += hiti.qsum;
     //
     bevent->hits.push_back(hiti);
     // Double_t phitQErr = phiti.qerr*timeUnit*1E9;
@@ -201,7 +204,7 @@ void hitFinder::findHits(int idet, Long64_t jentry)
   Int_t windowSize = 10;
   unsigned maxWidth = 100000;
   unsigned minWidth = 10;
-  derivativePeaks(idet, 3.0);
+  derivativePeaks(idet, rmsCut);
   hPeakCount->Fill(idet, peakList.size());
 }
 
@@ -336,25 +339,26 @@ void hitFinder::derivativePeaks(Int_t idet, Double_t rms)
   while (ip <= crossings.size() - 3)
   {
     int ibin = crossingBin[ip];
-    if (crossings[ip] == UPCROSS && crossings[ip + 1] == DOUBLEUPCROSS && crossings[ip + 2] > UPCROSS)
+    if (crossings[ip] == UPCROSS && crossings[ip + 1] == DOUBLEUPCROSS && crossings[ip + 2] == DOWNCROSS)
     {
       // if (idet==1)  printf("\t peak %lu ibin %i type (%i,%i,%i) \n", peakList.size() ,ibin, crossings[ip],crossings[ip+1],crossings[ip+2] );
       peakList.push_back(std::make_pair(crossingBin[ip], crossingBin[ip + 2]));
       peakKind.push_back(0);
-      /*
-      std::pair<unsigned,unsigned>  pp = std::make_pair(crossingBin[ip], crossingBin[ip + 2]);
-      unsigned ip = peakList.size() - 1;
-      printf(" derivativePeaks ip = %lu \n", peakList.size() );
-      unsigned klow = pp.first;
-      unsigned khigh = pp.second;
-      printf(" derivativePeaks   (%u,%u) \n ", klow, khigh);
-      */
-      //printf(" det %i make peak  (%i,%i) kind %i  \n", idet, crossingBin[ip], crossingBin[ip + 2], peakKind[peakKind.size() - 1]);
-      // ntDer->Fill(rms, v[crossingBin[ip]], double(crossingBin[ip + 2] - crossingBin[ip]), double(0)); // sigma:d0:step:dstep
+
       crossingFound[ip] = true;
       crossingFound[ip + 1] = true;
       crossingFound[ip + 2] = true;
       ip = ip + 3;
+      printf(" derivativePeaks ip = %lu type %i \n", peakList.size(), 0 );
+    }
+    else if (crossings[ip] == UPCROSS && crossings[ip + 1] == UPCROSS)
+    {
+      peakList.push_back(std::make_pair(crossingBin[ip], crossingBin[ip + 1]));
+      peakKind.push_back(1);
+      crossingFound[ip] = true;
+      crossingFound[ip + 1] = true;
+      ip = ip + 2;
+      printf(" derivativePeaks ip = %lu type %i \n", peakList.size(), 1 );
     }
     else
     {
@@ -375,14 +379,14 @@ hitMap hitFinder::makeHits(int idet, Double_t &triggerTime, Double_t &firstCharg
   Double_t qmax = 0;
 
   unsigned minLength = 5;
-  //cout << " ..... makeHits peak size " << peakList.size() << " peakKind  " << peakKind.size() << endl;
+  // cout << " ..... makeHits peak size " << peakList.size() << " peakKind  " << peakKind.size() << endl;
   if (peakList.size() < 1)
     return detHits;
   for (unsigned ip = 0; ip < peakList.size(); ++ip)
   {
     unsigned klow = std::get<0>(peakList[ip]);
     unsigned khigh = std::get<1>(peakList[ip]);
-    //printf(" hit  %u (%u,%u) kind %i length %u \n", ip, klow, khigh, peakKind[ip], khigh - klow + 1);
+    // printf(" hit  %u (%u,%u) kind %i length %u \n", ip, klow, khigh, peakKind[ip], khigh - klow + 1);
     hHitLength->Fill(khigh - klow + 1);
     if (khigh - klow + 1 < minLength)
     {
@@ -425,7 +429,7 @@ hitMap hitFinder::makeHits(int idet, Double_t &triggerTime, Double_t &firstCharg
       firstCharge = qsum;
     }
     Double_t hitTime = dhit.startTime * timeUnit * microSec;
-    // printf("  insert hit  %lu time %f (%u,%u) kind %i length %u  \n", detHits.size(), hitTime, dhit.firstBin, dhit.lastBin, peakKind[ip], khigh - klow + 1);
+    printf("  insert hit  %lu time %f (%u,%u) kind %i length %u  \n", detHits.size(), hitTime, dhit.firstBin, dhit.lastBin, peakKind[ip], khigh - klow + 1);
     //  for (unsigned k=klow; k<khigh; ++k) printf(" \t %u %f ; ", k, ddigi[k]);
     //  cout << endl;
     detHits.insert(std::pair<Double_t, TDetHit>(hitTime, dhit));
@@ -540,7 +544,7 @@ std::vector<std::complex<double>> hitFinder::FFT(Int_t id, std::vector<double> r
 
 std::vector<Double_t> hitFinder::inverseFFT(Int_t id, std::vector<std::complex<double>> VectorComplex, std::vector<double> rdigi)
 {
-  //cout << "  inverseFFT " << id << "....... " << endl;
+  // cout << "  inverseFFT " << id << "....... " << endl;
   std::vector<Double_t> Signal;
   double sum = 0;
   for (int is = 0; is < nsamples; ++is)
@@ -568,7 +572,7 @@ std::vector<Double_t> hitFinder::inverseFFT(Int_t id, std::vector<std::complex<d
 
 void hitFinder::plotWave(int idet, Long64_t jentry)
 {
-
+  evDir->cd();
   printf(" \t plotWave idet %i event %lld  %lu %lu %lu %lu \n", idet, jentry, digi.size(), ddigi.size(), hdigi.size(), fdigi.size());
 
   TString hname;
@@ -606,7 +610,8 @@ void hitFinder::plotWave(int idet, Long64_t jentry)
   can->cd(4);
   hhit->Draw();
 
-  can->Print(".gif");
+  can->Print(".pdf");
+  fout->cd();
 }
 
 void hitFinder::plotEvent(unsigned idet, Long64_t ievent)
@@ -682,13 +687,13 @@ bool hitFinder::getTransforms()
       continue;
     }
     gTransform[i] = (TGraph *)gw->Clone(Form("WeinerForDet%i-%s", i, tag.Data()));
-    //printf(" got transform %s points %i for run %s \n", gTransform[i]->GetName(), gTransform[i]->GetN(), tag.Data());
+    // printf(" got transform %s points %i for run %s \n", gTransform[i]->GetName(), gTransform[i]->GetN(), tag.Data());
     fftDir->Append(gTransform[i]);
   }
 
   if (gTransform[2])
     val = true;
 
-    printf(" got transforms for file %s %i \n", tag.Data(), val);
+  printf(" got transforms for file %s %i \n", tag.Data(), val);
   return val;
 }

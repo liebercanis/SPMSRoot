@@ -65,7 +65,9 @@ public:
   TSpms *fspms;
   TString tag;
   int nsamples;
+  double rmsCut; 
   TDirectory *fftDir;
+  TDirectory *evDir;
   hitFinder(TFile *theFile, TSpms *tspms, TTree *btree, TBEvent *beventInstance, TString theTag);
   virtual ~hitFinder() { ; }
   void plotWave(int idet, Long64_t jentry);

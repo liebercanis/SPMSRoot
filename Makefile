@@ -1,4 +1,4 @@
-basedirs      = src 
+basedirs      = obj src 
 
 all: build
 
