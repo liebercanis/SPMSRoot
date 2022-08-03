@@ -114,4 +114,6 @@ public:
   TH1D *hEvHitWave[NDET];
   TH1D *hEvDerWave[NDET];
   TH1D *hEvFiltWave[NDET];
+  TH1D *hCutHigh;
+  TH1D *hCutLow;
 };
