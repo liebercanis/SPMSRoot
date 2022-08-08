@@ -14,7 +14,7 @@ OBJDIR := $(SPMSDIR)/obj
 
 OBJS  = 
 
-EXES = spmsRoot 
+EXES = spmsRoot test
 
 LIBDIR 	:= $(shell pwd)/../lib
 SDIRCR := $(shell pwd)

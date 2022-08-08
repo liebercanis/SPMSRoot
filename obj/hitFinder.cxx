@@ -46,7 +46,8 @@ hitFinder::hitFinder(TFile *theFile, TSpms *tspms, TTree *btree, TBEvent *bevent
   fspms = tspms;
   ftree = btree;
   bevent = beventInstance;
-  nsamples = TSpms::NVALUES;
+  nsamples = tspms->getNValues();
+  nchannels = tspms->getNFlat();
   rmsCut = 2.;
   // initialize fft
   fFFT = TVirtualFFT::FFT(1, &nsamples, "R2C M K");
@@ -56,13 +57,23 @@ hitFinder::hitFinder(TFile *theFile, TSpms *tspms, TTree *btree, TBEvent *bevent
   timeUnit = 1.0; // ns per count
 
   fout->cd();
-  hPeakCount = new TH1D("PeakCount", " peaks by det ", NDET, 0, NDET);
+  hPeakCount = new TH1D("PeakCount", " peaks by det ", nchannels, 0, nchannels);
   hHitLength = new TH1I("HitLength", " hit length", 100, 0, 100);
   hPeakNWidth = new TH1I("PeakNWidth", "PeakNWidth", 100, 0, 100);
 
+  hFFT.resize(nchannels);
+  hInvFFT.resize(nchannels);
+  hFFTFilt.resize(nchannels);
+  hEvWave.resize(nchannels);
+  hEvHitWave.resize(nchannels);
+  hEvDerWave.resize(nchannels);
+  hEvFiltWave.resize(nchannels);
+  gTransform.resize(nchannels);
+  vsign = new double[nchannels];
+
   fftDir->cd();
 
-  for (unsigned id = 0; id < NDET; ++id)
+  for (unsigned id = 0; id < nchannels; ++id)
   {
     vsign[id] = 1.0;
     TString dname;
@@ -82,8 +93,8 @@ hitFinder::hitFinder(TFile *theFile, TSpms *tspms, TTree *btree, TBEvent *bevent
     hEvDerWave[id]->SetDirectory(nullptr);
     hEvHitWave[id]->SetDirectory(nullptr);
     hEvFiltWave[id]->SetDirectory(nullptr);
-    hCutHigh = new TH1D("CutHigh","Cut High", nsamples, 0, nsamples);
-    hCutLow = new TH1D("CutLow","Cut Low", nsamples, 0, nsamples);
+    hCutHigh = new TH1D("CutHigh", "Cut High", nsamples, 0, nsamples);
+    hCutLow = new TH1D("CutLow", "Cut Low", nsamples, 0, nsamples);
     hCutHigh->SetDirectory(nullptr);
     hCutLow->SetDirectory(nullptr);
   }
@@ -96,7 +107,7 @@ hitFinder::hitFinder(TFile *theFile, TSpms *tspms, TTree *btree, TBEvent *bevent
   {
     printf(" !!!! no transforms !!!! \n");
   }
-  cout << " created hitFinder with " << ftree->GetName() << " rmsCut  " <<  rmsCut << " gotTransforms= " << gotTransforms << endl;
+  cout << " created hitFinder with " << ftree->GetName() << " rmsCut  " << rmsCut << " gotTransforms= " << gotTransforms << endl;
 }
 
 void hitFinder::fevent(Long64_t ievent, vector<double> eventDigi)
@@ -352,14 +363,14 @@ void hitFinder::derivativePeaks(Int_t idet, Double_t rms)
     if (crossings[ip] == UPCROSS && crossings[ip + 1] == DOUBLEUPCROSS && crossings[ip + 2] == DOWNCROSS)
     {
       // if (idet==1)  printf("\t peak %lu ibin %i type (%i,%i,%i) \n", peakList.size() ,ibin, crossings[ip],crossings[ip+1],crossings[ip+2] );
-      peakList.push_back(std::make_pair(crossingBin[ip+1], crossingBin[ip + 2]));
+      peakList.push_back(std::make_pair(crossingBin[ip + 1], crossingBin[ip + 2]));
       peakKind.push_back(0);
 
       crossingFound[ip] = true;
       crossingFound[ip + 1] = true;
       crossingFound[ip + 2] = true;
       ip = ip + 3;
-      //printf(" derivativePeaks ip = %lu type %i \n", peakList.size(), 0 );
+      // printf(" derivativePeaks ip = %lu type %i \n", peakList.size(), 0 );
     }
     else if (crossings[ip] == UPCROSS && crossings[ip + 1] == UPCROSS)
     {
@@ -368,7 +379,7 @@ void hitFinder::derivativePeaks(Int_t idet, Double_t rms)
       crossingFound[ip] = true;
       crossingFound[ip + 1] = true;
       ip = ip + 2;
-      //printf(" derivativePeaks ip = %lu type %i \n", peakList.size(), 1 );
+      // printf(" derivativePeaks ip = %lu type %i \n", peakList.size(), 1 );
     }
     else
     {
@@ -439,9 +450,9 @@ hitMap hitFinder::makeHits(int idet, Double_t &triggerTime, Double_t &firstCharg
       firstCharge = qsum;
     }
     Double_t hitTime = dhit.startTime * timeUnit * microSec;
-    //printf("  insert hit  %lu time %f (%u,%u) kind %i length %u  \n", detHits.size(), hitTime, dhit.firstBin, dhit.lastBin, peakKind[ip], khigh - klow + 1);
-    //  for (unsigned k=klow; k<khigh; ++k) printf(" \t %u %f ; ", k, ddigi[k]);
-    //  cout << endl;
+    // printf("  insert hit  %lu time %f (%u,%u) kind %i length %u  \n", detHits.size(), hitTime, dhit.firstBin, dhit.lastBin, peakKind[ip], khigh - klow + 1);
+    //   for (unsigned k=klow; k<khigh; ++k) printf(" \t %u %f ; ", k, ddigi[k]);
+    //   cout << endl;
     detHits.insert(std::pair<Double_t, TDetHit>(hitTime, dhit));
     hPeakNWidth->Fill(dhit.lastBin - dhit.firstBin + 1);
   }
@@ -682,7 +693,7 @@ void hitFinder::plotEvent(unsigned idet, Long64_t ievent)
 bool hitFinder::getTransforms()
 {
   TGraph *gw = NULL;
-  TString fileName = TString("WienerTransforms.root");
+  TString fileName = TString("../obj/WienerTransforms.root");
   TFile *f1 = new TFile(fileName, "readonly");
   if (!f1)
   {
@@ -691,7 +702,7 @@ bool hitFinder::getTransforms()
   }
 
   bool val = true;
-  for (int i = 0; i < NDET; ++i)
+  for (int i = 0; i < nchannels; ++i)
   {
     gTransform[i] = NULL;
     f1->GetObject(Form("WienerTransDet%i", i), gw);
