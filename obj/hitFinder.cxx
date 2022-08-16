@@ -81,15 +81,15 @@ hitFinder::hitFinder(TFile *theFile, TSpms *tspms, TTree *btree, TBEvent *bevent
     detNames.push_back(dname);
     hFFT[id] = new TH1D(Form("FFTDET%i", id), Form("FFT Channel %i ", id), nsamples / 2, 0, nsamples / 2);
     hInvFFT[id] = new TH1D(Form("InvFFTDET%i", id), Form("Inverse FFT Channel %i ", id), nsamples, 0, nsamples);
-    hFFTFilt[id] = new TH1D(Form("FFTFiltDET%i", id), Form("filtered FFT Channel %i ", id), nsamples / 2, 0, nsamples / 2);
+    hFFTFilt[id] = new TH1D(Form("FFTFiltDET%i", id), Form("summed FFT Channel %i ", id), nsamples / 2, 0, nsamples / 2);
     hEvWave[id] = new TH1D(Form("EvWave%s", dname.Data()), Form("Wave%s", dname.Data()), nsamples, 0, nsamples);
     hEvDerWave[id] = new TH1D(Form("EvDerWave%s", dname.Data()), Form("DerWave%s", dname.Data()), nsamples, 0, nsamples);
     hEvFiltWave[id] = new TH1D(Form("EvFiltWave%s", dname.Data()), Form("FiltWave%s", dname.Data()), nsamples, 0, nsamples);
     hEvHitWave[id] = new TH1D(Form("EvHitWave%s", dname.Data()), Form("HitWave%s", dname.Data()), nsamples, 0, nsamples);
-    // hFFT[id]->SetDirectory(nullptr);
-    // hInvFFT[id]->SetDirectory(nullptr);
+    hFFT[id]->SetDirectory(nullptr);
+    hInvFFT[id]->SetDirectory(nullptr);
     // hFFTFilt[id]->SetDirectory(nullptr);
-    // hEvWave[id]->SetDirectory(nullptr);
+    hEvWave[id]->SetDirectory(nullptr);
     hEvDerWave[id]->SetDirectory(nullptr);
     hEvHitWave[id]->SetDirectory(nullptr);
     hEvFiltWave[id]->SetDirectory(nullptr);
@@ -551,10 +551,8 @@ std::vector<std::complex<double>> hitFinder::FFT(Int_t id, std::vector<double> r
     // skip first bin which is pedestal
     if (i < nsamples / 2)
     {
-      if (first)
-        hFFT[id]->SetBinContent(i, hFFT[id]->GetBinContent(i) + std::abs(c));
-      else
-        hFFTFilt[id]->SetBinContent(i, hFFTFilt[id]->GetBinContent(i) + std::abs(c));
+      hFFT[id]->SetBinContent(i, std::abs(c));
+      hFFTFilt[id]->SetBinContent(i, hFFTFilt[id]->GetBinContent(i) + std::abs(c));
     }
 
     realVec.push_back(VectorComplex[i].real());
@@ -586,7 +584,7 @@ std::vector<Double_t> hitFinder::inverseFFT(Int_t id, std::vector<std::complex<d
   for (int i = 0; i < nsamples; i++)
   {
     Signal[i] = Signal[i] * sum / norm;
-    hInvFFT[id]->SetBinContent(i + 1, hInvFFT[id]->GetBinContent(i + 1) + Signal[i]);
+    hInvFFT[id]->SetBinContent(i + 1, Signal[i]);
   }
   return Signal;
 }
@@ -643,6 +641,7 @@ void hitFinder::plotEvent(unsigned idet, Long64_t ievent)
 {
   // evDir->cd();
   fftDir->cd();
+
   TString histName;
   TString detName = bevent->GetName();
 
@@ -667,7 +666,6 @@ void hitFinder::plotEvent(unsigned idet, Long64_t ievent)
   /*
   histName.Form("EvFFTFilt%lli_DET%1i_%s", ievent, idet, detName.Data());
   TH1D *hfftfilt = (TH1D *)hFFTFilt[idet]->Clone(histName);
-
 
   histName.Form("EvBase%lli_DET%1i_%s", ievent,idet,detName.Data());
   TH1D* hbase = (TH1D*)hBaselineWMA[idet]->Clone(histName);
