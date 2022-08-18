@@ -58,7 +58,6 @@ public:
 
   //
   Double_t qnorm = 1.0;
-  double *vsign;
   TFile *fout;
   TTree *ftree;
   TBEvent *bevent;
@@ -76,6 +75,8 @@ public:
   void findHits(int idet, Long64_t jentry);
   void differentiate(unsigned diffStep);
   vector<TString> detNames;
+  std::vector<int> chanList;
+  std::vector<double> vsign;
   std::vector<double> rdigi;
   std::vector<double> digi;
   std::vector<double> ddigi;
@@ -106,6 +107,8 @@ public:
   std::vector<Double_t> inverseFFT(Int_t idet, std::vector<std::complex<double>> VectorComplex, std::vector<double> rdigi);
   std::vector<TGraph *> gTransform;
   bool gotTransforms;
+  int findChannel(int ichan); // if not there, add it
+  int getChannel(int ichan);  // just get if it is there
 
   // one for each channel
   std::vector<TH1D *> hFFT;

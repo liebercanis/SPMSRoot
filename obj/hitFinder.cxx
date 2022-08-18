@@ -61,46 +61,9 @@ hitFinder::hitFinder(TFile *theFile, TSpms *tspms, TTree *btree, TBEvent *bevent
   hHitLength = new TH1I("HitLength", " hit length", 100, 0, 100);
   hPeakNWidth = new TH1I("PeakNWidth", "PeakNWidth", 100, 0, 100);
 
-  hFFT.resize(nchannels);
-  hInvFFT.resize(nchannels);
-  hFFTFilt.resize(nchannels);
-  hEvWave.resize(nchannels);
-  hEvHitWave.resize(nchannels);
-  hEvDerWave.resize(nchannels);
-  hEvFiltWave.resize(nchannels);
-  gTransform.resize(nchannels);
-  vsign = new double[nchannels];
-
-  fftDir->cd();
-
-  for (unsigned id = 0; id < nchannels; ++id)
-  {
-    vsign[id] = 1.0;
-    TString dname;
-    dname.Form("SIPM-%i", id);
-    detNames.push_back(dname);
-    hFFT[id] = new TH1D(Form("FFTDET%i", id), Form("FFT Channel %i ", id), nsamples / 2, 0, nsamples / 2);
-    hInvFFT[id] = new TH1D(Form("InvFFTDET%i", id), Form("Inverse FFT Channel %i ", id), nsamples, 0, nsamples);
-    hFFTFilt[id] = new TH1D(Form("FFTFiltDET%i", id), Form("summed FFT Channel %i ", id), nsamples / 2, 0, nsamples / 2);
-    hEvWave[id] = new TH1D(Form("EvWave%s", dname.Data()), Form("Wave%s", dname.Data()), nsamples, 0, nsamples);
-    hEvDerWave[id] = new TH1D(Form("EvDerWave%s", dname.Data()), Form("DerWave%s", dname.Data()), nsamples, 0, nsamples);
-    hEvFiltWave[id] = new TH1D(Form("EvFiltWave%s", dname.Data()), Form("FiltWave%s", dname.Data()), nsamples, 0, nsamples);
-    hEvHitWave[id] = new TH1D(Form("EvHitWave%s", dname.Data()), Form("HitWave%s", dname.Data()), nsamples, 0, nsamples);
-    hFFT[id]->SetDirectory(nullptr);
-    hInvFFT[id]->SetDirectory(nullptr);
-    // hFFTFilt[id]->SetDirectory(nullptr);
-    hEvWave[id]->SetDirectory(nullptr);
-    hEvDerWave[id]->SetDirectory(nullptr);
-    hEvHitWave[id]->SetDirectory(nullptr);
-    hEvFiltWave[id]->SetDirectory(nullptr);
-    hCutHigh = new TH1D("CutHigh", "Cut High", nsamples, 0, nsamples);
-    hCutLow = new TH1D("CutLow", "Cut Low", nsamples, 0, nsamples);
-    hCutHigh->SetDirectory(nullptr);
-    hCutLow->SetDirectory(nullptr);
-  }
-
   fout->cd();
 
+  gTransform.resize(nchannels);
   gotTransforms = getTransforms();
 
   if (!gotTransforms)
@@ -108,6 +71,72 @@ hitFinder::hitFinder(TFile *theFile, TSpms *tspms, TTree *btree, TBEvent *bevent
     printf(" !!!! no transforms !!!! \n");
   }
   cout << " created hitFinder with " << ftree->GetName() << " rmsCut  " << rmsCut << " gotTransforms= " << gotTransforms << endl;
+}
+
+int hitFinder::getChannel(int ichan)
+{
+  // look to see if ichan is in list
+  std::vector<int>::iterator jp = std::find(chanList.begin(), chanList.end(), ichan);
+  int index = -1;
+
+  if (jp != chanList.end())
+  {
+    index = int(jp - chanList.begin());
+  }
+  printf("getChannel: ichan %i index %i list size %i  \n", ichan, index, int(chanList.size()));
+  return index;
+}
+
+int hitFinder::findChannel(int ichan)
+{
+  printf("ichan %i \n", ichan);
+  // look to see if ichan is in list
+  std::vector<int>::iterator jp = std::find(chanList.begin(), chanList.end(), ichan);
+  int index = 0;
+
+  if (jp != chanList.end())
+  {
+    index = int(jp - chanList.begin());
+    std::cout << "Element found in chanList: " << *jp << " index " << index << '\n';
+    return index;
+  }
+  else
+    std::cout << "Element not found in chanList size " << chanList.size() << "\n";
+
+  // not found, add to list
+  chanList.push_back(ichan);
+  index = chanList.size() - 1;
+
+  // add histogram
+  vsign.push_back(1.0);
+  TString dname;
+  dname.Form("SIPM-%i", ichan);
+  detNames.push_back(dname);
+  fftDir->cd();
+  hFFT.push_back(new TH1D(Form("FFTDET%i", ichan), Form("FFT Channel %i ", ichan), nsamples / 2, 0, nsamples / 2));
+  hInvFFT.push_back(new TH1D(Form("InvFFTDET%i", ichan), Form("Inverse FFT Channel %i ", ichan), nsamples, 0, nsamples));
+  hFFTFilt.push_back(new TH1D(Form("FFTFiltDET%i", ichan), Form("summed FFT Channel %i ", ichan), nsamples / 2, 0, nsamples / 2));
+  hEvWave.push_back(new TH1D(Form("EvWave%s", dname.Data()), Form("Wave%s", dname.Data()), nsamples, 0, nsamples));
+  hEvDerWave.push_back(new TH1D(Form("EvDerWave%s", dname.Data()), Form("DerWave%s", dname.Data()), nsamples, 0, nsamples));
+  hEvFiltWave.push_back(new TH1D(Form("EvFiltWave%s", dname.Data()), Form("FiltWave%s", dname.Data()), nsamples, 0, nsamples));
+  hEvHitWave.push_back(new TH1D(Form("EvHitWave%s", dname.Data()), Form("HitWave%s", dname.Data()), nsamples, 0, nsamples));
+
+  index = int(hFFT.size() - 1);
+  hFFT[index]->SetDirectory(nullptr);
+  hInvFFT[index]->SetDirectory(nullptr);
+  // hFFTFilt[index]->SetDirectory(nullptr);
+  hEvWave[index]->SetDirectory(nullptr);
+  hEvDerWave[index]->SetDirectory(nullptr);
+  hEvHitWave[index]->SetDirectory(nullptr);
+  hEvFiltWave[index]->SetDirectory(nullptr);
+  hCutHigh = new TH1D("CutHigh", "Cut High", nsamples, 0, nsamples);
+  hCutLow = new TH1D("CutLow", "Cut Low", nsamples, 0, nsamples);
+  hCutHigh->SetDirectory(nullptr);
+  hCutLow->SetDirectory(nullptr);
+  fout->cd();
+  //
+  printf("ichan %i index %i list size %i  \n", ichan, index, int(chanList.size()));
+  return index;
 }
 
 void hitFinder::fevent(Long64_t ievent, vector<double> eventDigi)
@@ -120,7 +149,8 @@ void hitFinder::fevent(Long64_t ievent, vector<double> eventDigi)
   double triggerTime = 0;
   double firstCharge = 0;
 
-  int idet = fspms->channel;
+  int idet = findChannel(fspms->channel);
+  printf(" ichan %i has index %i \n", fspms->channel, idet);
   bevent->event = fspms->ievt;
   bevent->time = fspms->timestamp;
   bevent->energy = fspms->energy;
@@ -589,10 +619,13 @@ std::vector<Double_t> hitFinder::inverseFFT(Int_t id, std::vector<std::complex<d
   return Signal;
 }
 
-void hitFinder::plotWave(int idet, Long64_t jentry)
+void hitFinder::plotWave(int ichan, Long64_t jentry)
 {
+  int idet = getChannel(ichan);
+  if (idet < 0)
+    return;
   evDir->cd();
-  printf(" \t plotWave idet %i event %lld  %lu %lu %lu %lu \n", idet, jentry, digi.size(), ddigi.size(), hdigi.size(), fdigi.size());
+  printf(" \t plotWave ichan %i idet %i event %lld  %lu %lu %lu %lu \n", ichan, idet, jentry, digi.size(), ddigi.size(), hdigi.size(), fdigi.size());
 
   TString hname;
   hname.Form("raw-det-%i-event-%lli", idet, jentry);
@@ -637,8 +670,12 @@ void hitFinder::plotWave(int idet, Long64_t jentry)
   fout->cd();
 }
 
-void hitFinder::plotEvent(unsigned idet, Long64_t ievent)
+void hitFinder::plotEvent(unsigned ichan, Long64_t ievent)
 {
+  int idet = getChannel(ichan);
+  if (idet < 0)
+    return;
+
   // evDir->cd();
   fftDir->cd();
 

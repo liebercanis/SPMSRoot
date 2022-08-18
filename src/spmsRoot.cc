@@ -7,6 +7,7 @@
 
 #include "H5Cpp.h"
 
+#include <TMath.h>
 #include <TString.h>
 #include <TFile.h>
 #include "TSpms.hxx"
@@ -18,11 +19,12 @@ using namespace H5;
 
 DataSpace dataSpace;
 DataSpace *mem_out;
-UShort_t *buff;
 hsize_t *extdims;
 hsize_t *offset;
 hsize_t *cnt;
 hsize_t ndims;
+vector<int> dataSetGroup;
+vector<int> dataSetIndex;
 vector<DataSet *> dataSets;
 vector<TString> dataNames;
 vector<Group *> groups;
@@ -31,11 +33,9 @@ TTree *ftree;
 TSpms *tspms;
 TBEvent *bevent;
 hitFinder *finder;
-size_t maxEvents;
+hsize_t maxEvents;
 int nvalue = 1;
-int nflat = 48;
-
-unsigned short xval[3404];
+int nchan = 48;
 
 bool goodName(TString name)
 {
@@ -100,7 +100,7 @@ TString getType(DataType type)
   return stype;
 }
 
-int getNFlattened(int iset)
+int getNChannels(int iset, int ievent = 0)
 {
   int nf = 0;
   DataSet *dataSet = dataSets[iset];
@@ -109,7 +109,7 @@ int getNFlattened(int iset)
     printf("NULL dataSet\n");
     return nf;
   }
-  if (dataNames[iset] != TString("flattened_data"))
+  if (dataNames[iset] != TString("cumulative_length"))
     return nf;
   //
   cout << iset << "  " << dataNames[iset];
@@ -119,10 +119,6 @@ int getNFlattened(int iset)
   int ndims = dataSpace.getSimpleExtentNdims();
   extdims = new hsize_t[ndims];
   ndims = dataSpace.getSimpleExtentDims(extdims);
-  cout << " ndims " << ndims;
-  for (int ir = 0; ir < ndims; ++ir)
-    printf("  extdims[%i]=%i ", ir, extdims[ir]);
-
   offset = new hsize_t[ndims];
   cnt = new hsize_t[ndims];
   cnt[0] = 1;
@@ -132,43 +128,35 @@ int getNFlattened(int iset)
     offset[1] = 0;
     cnt[1] = extdims[1];
   }
-
   // copy before setting for this event
   dataSpace.selectHyperslab(H5S_SELECT_SET, cnt, offset);
   mem_out = new DataSpace();
   mem_out->copy(dataSpace);
+  // select this event assume they are all the same;
+  offset[0] = ievent;
+  dataSpace.selectHyperslab(H5S_SELECT_SET, cnt, offset);
 
-  // select this event
-  for (int entry = 0; entry < extdims[0]; ++entry)
+  hsize_t start, end;
+  const hssize_t off = ievent;
+  dataSpace.selectHyperslab(H5S_SELECT_SET, cnt, offset);
+  dataSpace.getSelectBounds(&start, &end);
+  if (!dataSpace.selectValid())
   {
-    offset[0] = entry;
-    dataSpace.selectHyperslab(H5S_SELECT_SET, cnt, offset);
-
-    hsize_t start, end;
-    const hssize_t off = entry;
-    dataSpace.selectHyperslab(H5S_SELECT_SET, cnt, offset);
-    dataSpace.getSelectBounds(&start, &end);
-    if (!dataSpace.selectValid())
-    {
-      printf("ERROR on entry %lli !!\n", entry);
-      return nf;
-    }
-
-    mem_out->getSelectBounds(&start, &end);
-    int nout = cnt[0];
-    if (ndims > 1)
-      nout = cnt[1];
-    const DataType type = dataSet->getDataType();
-    int xval;
-    dataSet->read(&xval, dataSet->getDataType(), *mem_out, dataSpace);
-    cout << entry << ") " << nf << " ";
-    if (xval != entry)
-      break;
-    nf = xval;
+    printf("ERROR on entry %i !!\n", ievent);
+    return nf;
   }
-  nf += 1;
-  cout << " returning nf = " << nf << endl;
-  return nf;
+
+  mem_out->getSelectBounds(&start, &end);
+  int nout = cnt[0];
+  if (ndims > 1)
+    nout = cnt[1];
+  const DataType type = dataSet->getDataType();
+  int xval;
+  dataSet->read(&xval, dataSet->getDataType(), *mem_out, dataSpace);
+  cout << " returning for ievent  " << ievent << "  number of channels " << xval << endl;
+
+  // cumulative_length[N] - cumulative_length[N-1]
+  return xval;
 }
 
 void getDataNames(H5File *hfile)
@@ -255,10 +243,12 @@ void getDataset(int ig, int index)
   cout << "  " << ig << " "
        << groupNames[ig] << " index " << index << " " << grp->getObjnameByIdx(index) << "ndims= " << ndims;
   for (int ir = 0; ir < ndims; ++ir)
-    printf("  extdims[%i] = %i  ", ir, extdims[ir]);
+    printf("  extdims[%i] = %i  ", ir, int(extdims[ir]));
   cout << endl;
   dataSets.push_back(dset);
   dataNames.push_back(grp->getObjnameByIdx(index));
+  dataSetGroup.push_back(ig);
+  dataSetIndex.push_back(index);
   return;
 }
 
@@ -280,20 +270,31 @@ int_fast64_t showDataSets()
       printf("NULL PTR\n");
       return nf;
     }
-    if (dataNames[iset] == TString("flattened_data"))
+    if (dataNames[iset] == TString("cumulative_length"))
       nf = iset;
     cout << iset << "  " << dataNames[iset] << " Id = " << int(dataSet->getId());
     cout << " type class " << int(dataSet->getTypeClass());
     cout << " type size " << int(dataSet->getDataType().getSize());
     cout << " type  " << getType(dataSet->getDataType()) << endl;
   }
-  printf("\n\t total sets %lu nf = %i \n", dataSets.size(), nf);
+  printf("\n\t total sets %lu cumulative_length index  = %i \n", dataSets.size(), nf);
   return nf;
+}
+
+void showADataSet(int iset)
+{
+  DataSet *dataSet = dataSets[iset];
+  cout << " \t Show: " << iset << "  " << dataNames[iset] << " Id = " << int(dataSet->getId());
+  cout << " type class " << int(dataSet->getTypeClass());
+  cout << " type size " << int(dataSet->getDataType().getSize());
+  cout << " type  " << getType(dataSet->getDataType()) << endl;
 }
 
 void getEntry(int iset, long long entry)
 {
-  DataSet *dataSet = dataSets[iset];
+  // DataSet *dataSet = dataSets[iset];
+  Group *grp = groups[dataSetGroup[iset]];
+  DataSet *dataSet = new DataSet(grp->openDataSet(grp->getObjnameByIdx(dataSetIndex[iset])));
   if (!dataSet)
   {
     printf("NULL dataSet\n");
@@ -346,7 +347,7 @@ void getEntry(int iset, long long entry)
     printf("  count [%i] = %llu  off [%i] = %llu ; ", ir, cnt[ir], ir, offset[ir]);
   */
   dataSpace.selectHyperslab(H5S_SELECT_SET, cnt, offset);
-  // dataSpace.getSelectBounds(&start, &end);
+  dataSpace.getSelectBounds(&start, &end);
   // cout << "entry " << entry << " off " << off << " start " << start << " end " << end;
   if (!dataSpace.selectValid())
   {
@@ -358,21 +359,83 @@ void getEntry(int iset, long long entry)
   int nout = cnt[0];
   if (ndims > 1)
     nout = cnt[1];
+  // showADataSet(iset);
+  // cout << "get data type " << endl;
   const DataType type = dataSet->getDataType();
-  // cout << " mem start " << start << " end " << end << " type " << int(dataSet->getDataType().getSize()) << "  ";
+  // cout << " mem start " << start << " end " << end << " type " << int(dataSet->getDataType().getSize()) << endl;
   dataSet->read(ptr, dataSet->getDataType(), *mem_out, dataSpace);
-  // if(dataNames[iset]!=TString("values")) dataSet->read(ptr, dataSet->getDataType(), *mem_out, dataSpace);
-  // else  dataSet->read(&xval, dataSet->getDataType(), *mem_out, dataSpace);
   // cout << " entry " << entry << " ==  " << ftree->GetBranch(dataNames[iset])->FindLeaf(dataNames[iset])->GetValue() << endl;
 
-  // for (unsigned iv = 0; iv < tspms->values.size(); ++iv )
-  //  tspms->values[iv] = xval[iv];
   /*
-  if (dataNames[iset] == TString("values"))
+    if (dataNames[iset] == TString("values"))
+    {
+      cout << " values: " << tspms->values[0] << " " << tspms->values[tspms->values.size() - 1] << endl;
+    }
+    */
+}
+
+int getChannel(long long entry)
+{
+  int iset = 1;
+  int chan = -1;
+  // DataSet *dataSet = dataSets[iset];
+  Group *grp = groups[dataSetGroup[iset]];
+  DataSet *dataSet = new DataSet(grp->openDataSet(grp->getObjnameByIdx(dataSetIndex[iset])));
+  if (!dataSet)
   {
-    cout << " values: " << tspms->values[0] << " " << tspms->values[tspms->values.size() - 1] << endl;
+    printf("NULL dataSet\n");
+    return chan;
   }
-  */
+  char *ptr = NULL;
+  ptr = ftree->GetBranch(dataNames[iset])->GetAddress();
+  if (!ptr)
+  {
+    printf("NULL PTR\n");
+    return chan;
+  }
+  // cout << iset << "  " << dataNames[iset];
+  DataSpace dataSpace = dataSet->getSpace();
+  H5D_space_status_t hstatus;
+  dataSet->getSpaceStatus(hstatus);
+  int ndims = dataSpace.getSimpleExtentNdims();
+  extdims = new hsize_t[ndims];
+  ndims = dataSpace.getSimpleExtentDims(extdims);
+  offset = new hsize_t[ndims];
+  cnt = new hsize_t[ndims];
+  cnt[0] = 1;
+  offset[0] = 0;
+  if (ndims > 1)
+  {
+    offset[1] = 0;
+    cnt[1] = extdims[1];
+  }
+
+  // copy before setting for this event
+  dataSpace.selectHyperslab(H5S_SELECT_SET, cnt, offset);
+  mem_out = new DataSpace();
+  mem_out->copy(dataSpace);
+
+  // select this event
+  offset[0] = entry;
+  dataSpace.selectHyperslab(H5S_SELECT_SET, cnt, offset);
+
+  hsize_t start, end;
+  const hssize_t off = entry;
+  dataSpace.selectHyperslab(H5S_SELECT_SET, cnt, offset);
+  dataSpace.getSelectBounds(&start, &end);
+  if (!dataSpace.selectValid())
+  {
+    printf("ERROR on entry %lli !!\n", entry);
+    return chan;
+  }
+
+  mem_out->getSelectBounds(&start, &end);
+  int nout = cnt[0];
+  if (ndims > 1)
+    nout = cnt[1];
+  dataSet->read(ptr, dataSet->getDataType(), *mem_out, dataSpace);
+  chan = tspms->channel;
+  return chan;
 }
 
 void event(Long64_t ientry)
@@ -403,7 +466,7 @@ int main(int argc, char *argv[])
   maxEvents = 0;
 
   if (argc > 2)
-    maxEvents = atoi(argv[2]);
+    maxEvents = hsize_t(atoi(argv[2]));
   cout
       << "reading  " << tag.Data() << " maxEvents " << maxEvents << endl;
 
@@ -442,9 +505,9 @@ int main(int argc, char *argv[])
       getDataset(i, ig);
   }
 
-  nflat = getNFlattened(showDataSets());
+  nchan = getNChannels(showDataSets(), 0);
   // set vector array sizes
-  tspms->setArrays(nvalue, nflat);
+  tspms->setArrays(nvalue, nchan);
   tspms->clear();
   tspms->init(ftree);
 
@@ -455,15 +518,15 @@ int main(int argc, char *argv[])
   int ndims = dataSets[0]->getSpace().getSimpleExtentDims(&entries, NULL);
 
   cout << " \n \t file has total of  " << entries;
-  ;
   if (maxEvents > 0)
-    entries = maxEvents;
+    entries = TMath::Min(maxEvents, entries);
   cout << " ... looping over  " << entries << " dataSets.size() " << dataSets.size() << endl;
 
   for (Long64_t ientry = 0; ientry < entries; ++ientry)
   {
-    if (ientry / 100 * 100 == ientry)
-      cout << ".... " << ientry << " ftree " << ftree->GetEntries() << endl;
+    int chan = getChannel(ientry);
+    if (ientry / 1 * 1 == ientry)
+      cout << ".... " << ientry << " chan " << chan << " ftree " << ftree->GetEntries() << endl;
     tspms->clear();
     for (int iset = 0; iset < dataSets.size(); ++iset)
       getEntry(iset, ientry);
